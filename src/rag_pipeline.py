@@ -77,6 +77,57 @@ class QueryContext:
     document_type: str | None = None
 
 
+@dataclass(frozen=True)
+class RetrievalExpectation:
+    """Expected retrieval target for a sample evaluation question."""
+
+    question: str
+    expected_client: str
+    expected_document_type: str
+    expected_source: str
+
+
+@dataclass(frozen=True)
+class RetrievalEvaluationResult:
+    """Compact retrieval evaluation outcome for one question."""
+
+    expectation: RetrievalExpectation
+    top_result_source: str | None
+    top_result_client: str | None
+    top_result_document_type: str | None
+    client_match: bool
+    document_type_match: bool
+    source_match: bool
+
+
+EVALUATION_CASES = [
+    RetrievalExpectation(
+        question="Hva er Fjordmats tone of voice?",
+        expected_client="fjordmat",
+        expected_document_type="brand_guidelines",
+        expected_source="fjordmat/merkevareretningslinjer.md",
+    ),
+    RetrievalExpectation(
+        question="Hva var ROAS for Spareklars Google Ads i Q4 2024?",
+        expected_client="spareklar",
+        expected_document_type="campaign_report",
+        expected_source="spareklar/kampanjerapport-google-ads-q4-2024.md",
+    ),
+    RetrievalExpectation(
+        question="Hvilke influencere samarbeider Nordvik med?",
+        expected_client="nordvik",
+        expected_document_type="influencer_strategy",
+        expected_source="nordvik/influencer-strategi.md",
+    ),
+    RetrievalExpectation(
+        question="Hva sier kundecaset om Skytjenester sine resultater hos LogistikkPartner?",
+        expected_client="skytjenester",
+        expected_document_type="customer_case",
+        expected_source="skytjenester/kundecase-logistikkpartner.md",
+    ),
+]
+
+
 def extract_title(content: str, fallback: str) -> str:
     """Extract the first markdown H1 title or fall back to the filename."""
     for line in content.splitlines():
@@ -344,10 +395,19 @@ def query(question: str, k: int = 4, client: str | None = None) -> list[Document
 
     ``client`` can be used to limit retrieval to a specific client folder.
     """
-    context = infer_query_context(question)
     embeddings = get_embeddings()
     vectorstore = load_vectorstore(embeddings)
+    return query_vectorstore(vectorstore, question, k=k, client=client)
 
+
+def query_vectorstore(
+    vectorstore: Chroma,
+    question: str,
+    k: int = 4,
+    client: str | None = None,
+) -> list[Document]:
+    """Query an already-loaded vector store and rerank the results."""
+    context = infer_query_context(question)
     resolved_client = client or context.client
     search_kwargs: dict[str, object] = {"k": max(k * 3, 6)}
     if resolved_client:
@@ -368,6 +428,63 @@ def print_query_results(questions: list[str], k: int = 2) -> None:
             print(f"      {doc.page_content[:150].strip()}...")
 
 
+def evaluate_retrieval(
+    evaluation_cases: list[RetrievalExpectation],
+    vectorstore: Chroma,
+) -> list[RetrievalEvaluationResult]:
+    """Evaluate whether top-1 retrieval matches expected source metadata."""
+    results: list[RetrievalEvaluationResult] = []
+
+    for expectation in evaluation_cases:
+        retrieved_documents = query_vectorstore(vectorstore, expectation.question, k=1)
+        top_result = retrieved_documents[0] if retrieved_documents else None
+
+        result = RetrievalEvaluationResult(
+            expectation=expectation,
+            top_result_source=top_result.metadata["source"] if top_result else None,
+            top_result_client=top_result.metadata["client"] if top_result else None,
+            top_result_document_type=(
+                top_result.metadata["document_type"] if top_result else None
+            ),
+            client_match=(
+                bool(top_result)
+                and top_result.metadata["client"] == expectation.expected_client
+            ),
+            document_type_match=(
+                bool(top_result)
+                and top_result.metadata["document_type"]
+                == expectation.expected_document_type
+            ),
+            source_match=(
+                bool(top_result)
+                and top_result.metadata["source"] == expectation.expected_source
+            ),
+        )
+        results.append(result)
+
+    return results
+
+
+def print_evaluation_report(results: list[RetrievalEvaluationResult]) -> None:
+    """Print a compact pass/fail retrieval evaluation report."""
+    passed = sum(1 for result in results if result.source_match)
+
+    print("\n--- Retrieval Evaluation ---")
+    print(f"Top-1 source matches: {passed}/{len(results)}")
+
+    for result in results:
+        status = "PASS" if result.source_match else "FAIL"
+        print(f"\n[{status}] {result.expectation.question}")
+        print(f"  Expected source: {result.expectation.expected_source}")
+        print(f"  Actual source:   {result.top_result_source}")
+        print(
+            "  Match summary: "
+            f"client={result.client_match}, "
+            f"document_type={result.document_type_match}, "
+            f"source={result.source_match}"
+        )
+
+
 def parse_args() -> argparse.Namespace:
     """Parse CLI arguments for baseline inspection commands."""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -385,6 +502,11 @@ def parse_args() -> argparse.Namespace:
         "--metadata-audit",
         action="store_true",
         help="Print a compact audit of the normalized metadata fields.",
+    )
+    parser.add_argument(
+        "--evaluate",
+        action="store_true",
+        help="Run a compact retrieval evaluation against fixed sample questions.",
     )
     return parser.parse_args()
 
@@ -408,6 +530,9 @@ if __name__ == "__main__":
     print("Creating vector store...")
     vectorstore = create_vectorstore(chunks, embeddings)
     print(f"  Stored {vectorstore._collection.count()} vectors in {CHROMA_DIR}")
+
+    if args.evaluate:
+        print_evaluation_report(evaluate_retrieval(EVALUATION_CASES, vectorstore))
 
     if not args.skip_queries:
         print_query_results(TEST_QUESTIONS)
