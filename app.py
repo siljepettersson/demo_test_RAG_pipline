@@ -8,6 +8,7 @@ import streamlit as st
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
 
+from src.llm import available_providers, generate_answer
 from src.rag_pipeline import (
     DATA_DIR,
     build_vectorstore,
@@ -39,6 +40,12 @@ DOCUMENT_TYPE_LABELS = {
     "seo_report": "SEO-rapport",
     "other": "Annet dokument",
 }
+PROVIDER_LABELS = {
+    "anthropic": "Anthropic (Claude)",
+    "openai": "OpenAI (GPT)",
+    "minimax": "MiniMax",
+}
+NO_PROVIDER_LABEL = "Ingen (kun retrieval)"
 
 
 def format_document_type(document_type: str) -> str:
@@ -70,18 +77,42 @@ def rebuild_vectorstore() -> Chroma:
     return get_vectorstore()
 
 
-def answer_from_results(question: str, results: list[Document]) -> str:
-    """Create a short grounded answer from retrieved chunks without an external LLM."""
+def build_provider_options() -> list[tuple[str, str | None]]:
+    """Return (label, provider_key) pairs for the sidebar selectbox."""
+    options: list[tuple[str, str | None]] = [(NO_PROVIDER_LABEL, None)]
+    for provider in available_providers():
+        options.append((PROVIDER_LABELS.get(provider, provider.capitalize()), provider))
+    return options
+
+
+def retrieval_only_answer(results: list[Document]) -> str:
+    """Fallback answer that surfaces the top retrieved chunk without an LLM."""
     if not results:
         return (
             "Jeg fant ikke et tydelig svar i kunnskapsbasen. "
             "Prøv å være mer spesifikk eller velg en kunde i sidepanelet."
         )
-
     top_result = results[0]
     title = top_result.metadata["document_title"]
     snippet = snippet_from_chunk(top_result.page_content, limit=260)
     return f"Basert på {title}: {snippet}"
+
+
+def generate_ui_answer(
+    provider: str | None, question: str, results: list[Document]
+) -> str:
+    """Dispatch answer generation, falling back to retrieval-only on errors."""
+    if not results:
+        return retrieval_only_answer(results)
+    if provider is None:
+        return retrieval_only_answer(results)
+    try:
+        return generate_answer(provider, question, results)
+    except Exception as exc:
+        return (
+            f"Kunne ikke generere svar ({provider}): {exc}\n\n"
+            f"Retrieval-fallback:\n{retrieval_only_answer(results)}"
+        )
 
 
 def render_source_card(document: Document, index: int) -> None:
@@ -129,6 +160,19 @@ def main() -> None:
 
     with st.sidebar:
         st.header("Innstillinger")
+
+        provider_options = build_provider_options()
+        provider_labels = [label for label, _ in provider_options]
+        default_provider_index = 1 if len(provider_options) > 1 else 0
+        provider_label = st.selectbox(
+            "LLM-leverandør",
+            options=provider_labels,
+            index=default_provider_index,
+        )
+        selected_provider = dict(provider_options)[provider_label]
+        if selected_provider is None and len(provider_options) == 1:
+            st.caption("Ingen API-nøkler i .env — kjører i retrieval-modus.")
+
         client_label = st.selectbox(
             "Kunde",
             options=[label for label, _ in CLIENT_OPTIONS],
@@ -176,7 +220,13 @@ def main() -> None:
                 k=top_k,
                 client=selected_client,
             )
-            answer = answer_from_results(prompt, results)
+
+        if selected_provider is not None:
+            provider_display = PROVIDER_LABELS.get(selected_provider, selected_provider)
+            with st.spinner(f"Genererer svar med {provider_display}..."):
+                answer = generate_ui_answer(selected_provider, prompt, results)
+        else:
+            answer = retrieval_only_answer(results)
 
         st.write(answer)
         if results:
