@@ -1,0 +1,155 @@
+"""
+RAG pipeline for the agency client knowledge base demo.
+
+This module loads Norwegian client documents from ``data/``, chunks them,
+embeds them locally, and stores them in Chroma for retrieval.
+"""
+
+from __future__ import annotations
+
+import shutil
+from pathlib import Path
+
+from langchain_chroma import Chroma
+from langchain_core.documents import Document
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_community.document_loaders import DirectoryLoader, TextLoader
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+DATA_DIR = PROJECT_ROOT / "data"
+CHROMA_DIR = PROJECT_ROOT / "vectorstore"
+
+EMBEDDING_MODEL = "paraphrase-multilingual-MiniLM-L12-v2"
+COLLECTION_NAME = "agency_knowledge_base"
+
+CHUNK_SIZE = 1000
+CHUNK_OVERLAP = 200
+
+
+def load_documents() -> list[Document]:
+    """Load all markdown documents and attach lightweight metadata."""
+    loader = DirectoryLoader(
+        str(DATA_DIR),
+        glob="**/*.md",
+        loader_cls=TextLoader,
+        loader_kwargs={"encoding": "utf-8"},
+    )
+    documents = loader.load()
+
+    for doc in documents:
+        source_path = Path(doc.metadata["source"]).resolve()
+        relative_path = source_path.relative_to(DATA_DIR.resolve())
+
+        doc.metadata["client"] = relative_path.parts[0]
+        doc.metadata["filename"] = relative_path.name
+        doc.metadata["source"] = str(relative_path)
+
+    return documents
+
+
+def chunk_documents(documents: list[Document]) -> list[Document]:
+    """Split documents into overlapping chunks for retrieval."""
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=CHUNK_SIZE,
+        chunk_overlap=CHUNK_OVERLAP,
+        separators=["\n## ", "\n### ", "\n\n", "\n", " "],
+    )
+    return splitter.split_documents(documents)
+
+
+def get_embeddings() -> HuggingFaceEmbeddings:
+    """Initialize the multilingual local embedding model."""
+    return HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
+
+
+def reset_vectorstore() -> None:
+    """Remove any persisted Chroma data so indexing stays deterministic."""
+    if CHROMA_DIR.exists():
+        shutil.rmtree(CHROMA_DIR)
+
+
+def create_vectorstore(
+    chunks: list[Document],
+    embeddings: HuggingFaceEmbeddings,
+) -> Chroma:
+    """Create and persist a Chroma vector store from chunked documents."""
+    return Chroma.from_documents(
+        documents=chunks,
+        embedding=embeddings,
+        persist_directory=str(CHROMA_DIR),
+        collection_name=COLLECTION_NAME,
+    )
+
+
+def load_vectorstore(embeddings: HuggingFaceEmbeddings) -> Chroma:
+    """Load a persisted Chroma vector store from disk."""
+    if not CHROMA_DIR.exists():
+        raise FileNotFoundError(
+            f"No vector store found at {CHROMA_DIR}. Run build_vectorstore() first."
+        )
+
+    return Chroma(
+        persist_directory=str(CHROMA_DIR),
+        embedding_function=embeddings,
+        collection_name=COLLECTION_NAME,
+    )
+
+
+def build_vectorstore(reset: bool = True) -> Chroma:
+    """Build the full pipeline from raw documents to a persisted vector store."""
+    if reset:
+        reset_vectorstore()
+
+    print("Loading documents...")
+    documents = load_documents()
+    print(f"  Loaded {len(documents)} documents")
+
+    print("Chunking documents...")
+    chunks = chunk_documents(documents)
+    print(f"  Created {len(chunks)} chunks")
+
+    print("Initializing embedding model...")
+    embeddings = get_embeddings()
+
+    print("Creating vector store...")
+    vectorstore = create_vectorstore(chunks, embeddings)
+    print(f"  Stored {vectorstore._collection.count()} vectors in {CHROMA_DIR}")
+
+    return vectorstore
+
+
+def query(question: str, k: int = 4, client: str | None = None) -> list[Document]:
+    """
+    Query the vector store and return relevant document chunks.
+
+    ``client`` can be used to limit retrieval to a specific client folder.
+    """
+    embeddings = get_embeddings()
+    vectorstore = load_vectorstore(embeddings)
+
+    search_kwargs: dict[str, object] = {"k": k}
+    if client:
+        search_kwargs["filter"] = {"client": client}
+
+    return vectorstore.similarity_search(question, **search_kwargs)
+
+
+if __name__ == "__main__":
+    build_vectorstore()
+
+    test_questions = [
+        "Hva er Fjordmats tone of voice?",
+        "Hva var ROAS for Spareklars Google Ads i Q4 2024?",
+        "Hvilke influencere samarbeider Nordvik med?",
+        "Hva sier kundecaset om Skytjenester sine resultater hos LogistikkPartner?",
+    ]
+
+    print("\n--- Test Queries ---")
+    for question in test_questions:
+        results = query(question, k=2)
+        print(f"\nQ: {question}")
+        for index, doc in enumerate(results, start=1):
+            print(f"  [{index}] {doc.metadata['source']}")
+            print(f"      {doc.page_content[:150].strip()}...")

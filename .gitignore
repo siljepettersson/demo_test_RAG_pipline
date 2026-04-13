@@ -144,6 +144,9 @@ ENV/
 env.bak/
 venv.bak/
 
+# Project-generated local data
+vectorstore/
+
 # Spyder project settings
 .spyderproject
 .spyproject
