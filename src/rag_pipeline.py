@@ -72,7 +72,10 @@ def load_documents() -> list[Document]:
         loader_cls=TextLoader,
         loader_kwargs={"encoding": "utf-8"},
     )
-    documents = loader.load()
+    documents = sorted(
+        loader.load(),
+        key=lambda document: str(Path(document.metadata["source"]).resolve()),
+    )
 
     for doc in documents:
         source_path = Path(doc.metadata["source"]).resolve()
@@ -106,7 +109,7 @@ def chunk_documents(documents: list[Document]) -> list[Document]:
         chunk.metadata["chunk_id"] = f"{source}#chunk-{chunk_index:03d}"
         chunk_counters[source] += 1
 
-    return chunks
+    return sorted(chunks, key=lambda chunk: chunk.metadata["chunk_id"])
 
 
 def print_corpus_summary(documents: list[Document], chunks: list[Document]) -> None:
@@ -193,6 +196,7 @@ def create_vectorstore(
     """Create and persist a Chroma vector store from chunked documents."""
     return Chroma.from_documents(
         documents=chunks,
+        ids=[chunk.metadata["chunk_id"] for chunk in chunks],
         embedding=embeddings,
         persist_directory=str(CHROMA_DIR),
         collection_name=COLLECTION_NAME,
@@ -218,13 +222,7 @@ def build_vectorstore(reset: bool = True) -> Chroma:
     if reset:
         reset_vectorstore()
 
-    print("Loading documents...")
-    documents = load_documents()
-    print(f"  Loaded {len(documents)} documents")
-
-    print("Chunking documents...")
-    chunks = chunk_documents(documents)
-    print(f"  Created {len(chunks)} chunks")
+    documents, chunks = inspect_corpus()
 
     print("Initializing embedding model...")
     embeddings = get_embeddings()
@@ -234,6 +232,20 @@ def build_vectorstore(reset: bool = True) -> Chroma:
     print(f"  Stored {vectorstore._collection.count()} vectors in {CHROMA_DIR}")
 
     return vectorstore
+
+
+def inspect_corpus() -> tuple[list[Document], list[Document]]:
+    """Load and chunk documents using the same deterministic path as indexing."""
+    documents = load_documents()
+    chunks = chunk_documents(documents)
+
+    print("Loading documents...")
+    print(f"  Loaded {len(documents)} documents")
+
+    print("Chunking documents...")
+    print(f"  Created {len(chunks)} chunks")
+
+    return documents, chunks
 
 
 def query(question: str, k: int = 4, client: str | None = None) -> list[Document]:
@@ -287,14 +299,7 @@ def parse_args() -> argparse.Namespace:
 if __name__ == "__main__":
     args = parse_args()
 
-    documents = load_documents()
-    chunks = chunk_documents(documents)
-
-    print("Loading documents...")
-    print(f"  Loaded {len(documents)} documents")
-
-    print("Chunking documents...")
-    print(f"  Created {len(chunks)} chunks")
+    documents, chunks = inspect_corpus()
 
     if args.summary:
         print_corpus_summary(documents, chunks)
