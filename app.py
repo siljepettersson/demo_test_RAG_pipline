@@ -116,22 +116,16 @@ def generate_ui_answer(
 
 
 def render_source_card(document: Document, index: int) -> None:
-    """Render one source card with metadata and optional chunk text."""
+    """Render one source as a compact, collapsed expander."""
     metadata = document.metadata
-    with st.container(border=True):
-        st.markdown(f"**Kilde {index}: {metadata['document_title']}**")
-        st.caption(
-            " | ".join(
-                [
-                    metadata["client"].capitalize(),
-                    format_document_type(metadata["document_type"]),
-                    metadata["source"],
-                ]
-            )
-        )
-        st.write(snippet_from_chunk(document.page_content))
-        with st.expander("Vis utdrag"):
-            st.write(document.page_content)
+    label = (
+        f"**Kilde {index}:** {metadata['document_title']} — "
+        f"{metadata['client'].capitalize()} | "
+        f"{format_document_type(metadata['document_type'])}"
+    )
+    with st.expander(label):
+        st.caption(metadata["source"])
+        st.caption(document.page_content)
 
 
 def render_assistant_message(message: dict[str, Any]) -> None:
@@ -139,7 +133,7 @@ def render_assistant_message(message: dict[str, Any]) -> None:
     st.write(message["answer"])
     if not message["sources"]:
         return
-    st.markdown("**Kilder**")
+    st.caption("**Kilder**")
     for index, document in enumerate(message["sources"], start=1):
         render_source_card(document, index)
 
@@ -230,7 +224,7 @@ def main() -> None:
 
         st.write(answer)
         if results:
-            st.markdown("**Kilder**")
+            st.caption("**Kilder**")
             for index, document in enumerate(results, start=1):
                 render_source_card(document, index)
 
