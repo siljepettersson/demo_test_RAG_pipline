@@ -7,7 +7,9 @@ embeds them locally, and stores them in Chroma for retrieval.
 
 from __future__ import annotations
 
+import argparse
 import shutil
+from collections import Counter
 from pathlib import Path
 
 from langchain_chroma import Chroma
@@ -26,6 +28,12 @@ COLLECTION_NAME = "agency_knowledge_base"
 
 CHUNK_SIZE = 1000
 CHUNK_OVERLAP = 200
+TEST_QUESTIONS = [
+    "Hva er Fjordmats tone of voice?",
+    "Hva var ROAS for Spareklars Google Ads i Q4 2024?",
+    "Hvilke influencere samarbeider Nordvik med?",
+    "Hva sier kundecaset om Skytjenester sine resultater hos LogistikkPartner?",
+]
 
 
 def load_documents() -> list[Document]:
@@ -57,6 +65,29 @@ def chunk_documents(documents: list[Document]) -> list[Document]:
         separators=["\n## ", "\n### ", "\n\n", "\n", " "],
     )
     return splitter.split_documents(documents)
+
+
+def print_corpus_summary(documents: list[Document], chunks: list[Document]) -> None:
+    """Print a compact baseline summary of the indexed corpus."""
+    documents_by_client = Counter(doc.metadata["client"] for doc in documents)
+    chunks_by_client = Counter(chunk.metadata["client"] for chunk in chunks)
+    chunks_by_source = Counter(chunk.metadata["source"] for chunk in chunks)
+
+    print("\n--- Corpus Summary ---")
+    print(f"Documents: {len(documents)}")
+    print(f"Chunks: {len(chunks)}")
+    print(f"Average chunks per document: {len(chunks) / len(documents):.2f}")
+    print("\nDocuments by client:")
+    for client, count in sorted(documents_by_client.items()):
+        print(f"  - {client}: {count}")
+
+    print("\nChunks by client:")
+    for client, count in sorted(chunks_by_client.items()):
+        print(f"  - {client}: {count}")
+
+    print("\nTop chunk-heavy documents:")
+    for source, count in chunks_by_source.most_common(5):
+        print(f"  - {source}: {count}")
 
 
 def get_embeddings() -> HuggingFaceEmbeddings:
@@ -136,20 +167,56 @@ def query(question: str, k: int = 4, client: str | None = None) -> list[Document
     return vectorstore.similarity_search(question, **search_kwargs)
 
 
-if __name__ == "__main__":
-    build_vectorstore()
-
-    test_questions = [
-        "Hva er Fjordmats tone of voice?",
-        "Hva var ROAS for Spareklars Google Ads i Q4 2024?",
-        "Hvilke influencere samarbeider Nordvik med?",
-        "Hva sier kundecaset om Skytjenester sine resultater hos LogistikkPartner?",
-    ]
-
+def print_query_results(questions: list[str], k: int = 2) -> None:
+    """Run a small set of baseline retrieval checks and print the top matches."""
     print("\n--- Test Queries ---")
-    for question in test_questions:
-        results = query(question, k=2)
+    for question in questions:
+        results = query(question, k=k)
         print(f"\nQ: {question}")
         for index, doc in enumerate(results, start=1):
             print(f"  [{index}] {doc.metadata['source']}")
             print(f"      {doc.page_content[:150].strip()}...")
+
+
+def parse_args() -> argparse.Namespace:
+    """Parse CLI arguments for baseline inspection commands."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--summary",
+        action="store_true",
+        help="Print a corpus summary after loading and chunking documents.",
+    )
+    parser.add_argument(
+        "--skip-queries",
+        action="store_true",
+        help="Build the vector store without running the baseline test queries.",
+    )
+    return parser.parse_args()
+
+
+if __name__ == "__main__":
+    args = parse_args()
+
+    documents = load_documents()
+    chunks = chunk_documents(documents)
+
+    print("Loading documents...")
+    print(f"  Loaded {len(documents)} documents")
+
+    print("Chunking documents...")
+    print(f"  Created {len(chunks)} chunks")
+
+    if args.summary:
+        print_corpus_summary(documents, chunks)
+
+    reset_vectorstore()
+
+    print("Initializing embedding model...")
+    embeddings = get_embeddings()
+
+    print("Creating vector store...")
+    vectorstore = create_vectorstore(chunks, embeddings)
+    print(f"  Stored {vectorstore._collection.count()} vectors in {CHROMA_DIR}")
+
+    if not args.skip_queries:
+        print_query_results(TEST_QUESTIONS)
