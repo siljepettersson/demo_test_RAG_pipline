@@ -5,12 +5,15 @@ description = "Demo RAG client knowledge base for a marketing agency use case."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "anthropic>=0.40.0",
     "chromadb>=1.0.0",
+    "httpx>=0.27.0",
     "langchain>=0.3.0",
     "langchain-chroma>=0.2.0",
     "langchain-community>=0.3.0",
     "langchain-huggingface>=0.1.0",
     "langchain-text-splitters>=0.3.0",
+    "openai>=1.50.0",
     "python-dotenv>=1.0.0",
     "sentence-transformers>=3.0.0",
     "streamlit>=1.44.0",
