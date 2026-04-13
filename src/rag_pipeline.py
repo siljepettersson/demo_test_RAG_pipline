@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import shutil
 from collections import Counter
+from dataclasses import dataclass
 from pathlib import Path
 
 from langchain_chroma import Chroma
@@ -34,6 +35,46 @@ TEST_QUESTIONS = [
     "Hvilke influencere samarbeider Nordvik med?",
     "Hva sier kundecaset om Skytjenester sine resultater hos LogistikkPartner?",
 ]
+CLIENT_ALIASES = {
+    "fjordmat": "fjordmat",
+    "fjordmats": "fjordmat",
+    "spareklar": "spareklar",
+    "spareklars": "spareklar",
+    "nordvik": "nordvik",
+    "nordviks": "nordvik",
+    "skytjenester": "skytjenester",
+    "skytjenesters": "skytjenester",
+}
+DOCUMENT_TYPE_HINTS = {
+    "brand_guidelines": [
+        "tone of voice",
+        "merkevare",
+        "merkevareretningslinjer",
+        "visuell identitet",
+    ],
+    "campaign_report": [
+        "roas",
+        "rapport",
+        "kampanjerapport",
+        "google ads",
+        "resultater",
+        "resultat",
+    ],
+    "campaign_brief": ["brief", "kampanjebrief", "lansering"],
+    "meeting_notes": ["møtereferat", "meeting notes", "referat"],
+    "social_media_strategy": ["sosiale medier", "social media strategy"],
+    "influencer_strategy": ["influencer", "influencere"],
+    "customer_case": ["kundecase", "kundecaset", "case study"],
+    "seo_report": ["seo", "organisk trafikk"],
+}
+
+
+@dataclass(frozen=True)
+class QueryContext:
+    """Structured hints derived from the user's query."""
+
+    client: str | None = None
+    document_type: str | None = None
 
 
 def extract_title(content: str, fallback: str) -> str:
@@ -62,6 +103,55 @@ def infer_document_type(filename: str) -> str:
             return document_type
 
     return "other"
+
+
+def infer_query_context(question: str) -> QueryContext:
+    """Infer client and document-type hints from a Norwegian question."""
+    normalized_question = question.casefold()
+
+    client = next(
+        (
+            canonical_client
+            for alias, canonical_client in CLIENT_ALIASES.items()
+            if alias in normalized_question
+        ),
+        None,
+    )
+    document_type_scores: list[tuple[int, int, str]] = []
+    for candidate_type, hints in DOCUMENT_TYPE_HINTS.items():
+        matched_hints = [hint for hint in hints if hint in normalized_question]
+        if matched_hints:
+            document_type_scores.append(
+                (
+                    len(matched_hints),
+                    max(len(hint) for hint in matched_hints),
+                    candidate_type,
+                )
+            )
+
+    document_type = (
+        max(document_type_scores)[2] if document_type_scores else None
+    )
+
+    return QueryContext(client=client, document_type=document_type)
+
+
+def rerank_results(
+    results: list[Document],
+    context: QueryContext,
+) -> list[Document]:
+    """Promote chunks whose metadata matches explicit query hints."""
+    def score(document: Document) -> tuple[int, int]:
+        client_match = int(
+            context.client is not None and document.metadata["client"] == context.client
+        )
+        document_type_match = int(
+            context.document_type is not None
+            and document.metadata["document_type"] == context.document_type
+        )
+        return (client_match + document_type_match, document_type_match)
+
+    return sorted(results, key=score, reverse=True)
 
 
 def load_documents() -> list[Document]:
@@ -254,14 +344,17 @@ def query(question: str, k: int = 4, client: str | None = None) -> list[Document
 
     ``client`` can be used to limit retrieval to a specific client folder.
     """
+    context = infer_query_context(question)
     embeddings = get_embeddings()
     vectorstore = load_vectorstore(embeddings)
 
-    search_kwargs: dict[str, object] = {"k": k}
-    if client:
-        search_kwargs["filter"] = {"client": client}
+    resolved_client = client or context.client
+    search_kwargs: dict[str, object] = {"k": max(k * 3, 6)}
+    if resolved_client:
+        search_kwargs["filter"] = {"client": resolved_client}
 
-    return vectorstore.similarity_search(question, **search_kwargs)
+    results = vectorstore.similarity_search(question, **search_kwargs)
+    return rerank_results(results, context)[:k]
 
 
 def print_query_results(questions: list[str], k: int = 2) -> None:
