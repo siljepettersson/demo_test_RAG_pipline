@@ -29,6 +29,15 @@ COLLECTION_NAME = "agency_knowledge_base"
 
 CHUNK_SIZE = 1000
 CHUNK_OVERLAP = 200
+REQUIRED_DOCUMENT_FIELDS = [
+    "client",
+    "filename",
+    "document_title",
+    "document_type",
+    "source",
+    "source_path",
+]
+REQUIRED_CHUNK_FIELDS = REQUIRED_DOCUMENT_FIELDS + ["chunk_index", "chunk_id"]
 TEST_QUESTIONS = [
     "Hva er Fjordmats tone of voice?",
     "Hva var ROAS for Spareklars Google Ads i Q4 2024?",
@@ -126,6 +135,20 @@ EVALUATION_CASES = [
         expected_source="skytjenester/kundecase-logistikkpartner.md",
     ),
 ]
+
+
+def build_search_kwargs(
+    question: str,
+    k: int,
+    client: str | None = None,
+) -> tuple[QueryContext, dict[str, object]]:
+    """Build retrieval search kwargs from the user question and optional filter."""
+    context = infer_query_context(question)
+    resolved_client = client or context.client
+    search_kwargs: dict[str, object] = {"k": max(k * 3, 6)}
+    if resolved_client:
+        search_kwargs["filter"] = {"client": resolved_client}
+    return context, search_kwargs
 
 
 def extract_title(content: str, fallback: str) -> str:
@@ -278,25 +301,15 @@ def print_corpus_summary(documents: list[Document], chunks: list[Document]) -> N
 
 def print_metadata_audit(documents: list[Document], chunks: list[Document]) -> None:
     """Print a compact audit of required source metadata fields."""
-    required_document_fields = [
-        "client",
-        "filename",
-        "document_title",
-        "document_type",
-        "source",
-        "source_path",
-    ]
-    required_chunk_fields = required_document_fields + ["chunk_index", "chunk_id"]
-
     print("\n--- Metadata Audit ---")
 
     missing_document_fields = {
         field: sum(1 for doc in documents if field not in doc.metadata)
-        for field in required_document_fields
+        for field in REQUIRED_DOCUMENT_FIELDS
     }
     missing_chunk_fields = {
         field: sum(1 for chunk in chunks if field not in chunk.metadata)
-        for field in required_chunk_fields
+        for field in REQUIRED_CHUNK_FIELDS
     }
 
     print("Missing document fields:")
@@ -315,7 +328,7 @@ def print_metadata_audit(documents: list[Document], chunks: list[Document]) -> N
 
     print("\nSample chunk metadata:")
     sample_chunk = chunks[0]
-    for field in required_chunk_fields:
+    for field in REQUIRED_CHUNK_FIELDS:
         print(f"  - {field}: {sample_chunk.metadata[field]}")
 
 
@@ -407,12 +420,7 @@ def query_vectorstore(
     client: str | None = None,
 ) -> list[Document]:
     """Query an already-loaded vector store and rerank the results."""
-    context = infer_query_context(question)
-    resolved_client = client or context.client
-    search_kwargs: dict[str, object] = {"k": max(k * 3, 6)}
-    if resolved_client:
-        search_kwargs["filter"] = {"client": resolved_client}
-
+    context, search_kwargs = build_search_kwargs(question, k=k, client=client)
     results = vectorstore.similarity_search(question, **search_kwargs)
     return rerank_results(results, context)[:k]
 
@@ -511,9 +519,8 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-if __name__ == "__main__":
-    args = parse_args()
-
+def run_cli(args: argparse.Namespace) -> None:
+    """Run the CLI entrypoint for indexing, inspection, and evaluation."""
     documents, chunks = inspect_corpus()
 
     if args.summary:
@@ -536,3 +543,7 @@ if __name__ == "__main__":
 
     if not args.skip_queries:
         print_query_results(TEST_QUESTIONS)
+
+
+if __name__ == "__main__":
+    run_cli(parse_args())
