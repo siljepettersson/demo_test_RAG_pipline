@@ -36,8 +36,36 @@ TEST_QUESTIONS = [
 ]
 
 
+def extract_title(content: str, fallback: str) -> str:
+    """Extract the first markdown H1 title or fall back to the filename."""
+    for line in content.splitlines():
+        if line.startswith("# "):
+            return line.removeprefix("# ").strip()
+    return fallback
+
+
+def infer_document_type(filename: str) -> str:
+    """Infer a stable document type from the filename."""
+    document_type_map = {
+        "merkevareretningslinjer": "brand_guidelines",
+        "kampanjebrief": "campaign_brief",
+        "kampanjerapport": "campaign_report",
+        "motereferat": "meeting_notes",
+        "sosiale-medier-strategi": "social_media_strategy",
+        "influencer-strategi": "influencer_strategy",
+        "seo-rapport": "seo_report",
+        "kundecase": "customer_case",
+    }
+
+    for prefix, document_type in document_type_map.items():
+        if filename.startswith(prefix):
+            return document_type
+
+    return "other"
+
+
 def load_documents() -> list[Document]:
-    """Load all markdown documents and attach lightweight metadata."""
+    """Load all markdown documents and attach normalized source metadata."""
     loader = DirectoryLoader(
         str(DATA_DIR),
         glob="**/*.md",
@@ -49,9 +77,13 @@ def load_documents() -> list[Document]:
     for doc in documents:
         source_path = Path(doc.metadata["source"]).resolve()
         relative_path = source_path.relative_to(DATA_DIR.resolve())
+        filename = relative_path.name
 
         doc.metadata["client"] = relative_path.parts[0]
-        doc.metadata["filename"] = relative_path.name
+        doc.metadata["filename"] = filename
+        doc.metadata["document_title"] = extract_title(doc.page_content, filename)
+        doc.metadata["document_type"] = infer_document_type(filename.removesuffix(".md"))
+        doc.metadata["source_path"] = str(source_path)
         doc.metadata["source"] = str(relative_path)
 
     return documents
@@ -64,7 +96,17 @@ def chunk_documents(documents: list[Document]) -> list[Document]:
         chunk_overlap=CHUNK_OVERLAP,
         separators=["\n## ", "\n### ", "\n\n", "\n", " "],
     )
-    return splitter.split_documents(documents)
+    chunks = splitter.split_documents(documents)
+
+    chunk_counters: Counter[str] = Counter()
+    for chunk in chunks:
+        source = chunk.metadata["source"]
+        chunk_index = chunk_counters[source]
+        chunk.metadata["chunk_index"] = chunk_index
+        chunk.metadata["chunk_id"] = f"{source}#chunk-{chunk_index:03d}"
+        chunk_counters[source] += 1
+
+    return chunks
 
 
 def print_corpus_summary(documents: list[Document], chunks: list[Document]) -> None:
@@ -88,6 +130,49 @@ def print_corpus_summary(documents: list[Document], chunks: list[Document]) -> N
     print("\nTop chunk-heavy documents:")
     for source, count in chunks_by_source.most_common(5):
         print(f"  - {source}: {count}")
+
+
+def print_metadata_audit(documents: list[Document], chunks: list[Document]) -> None:
+    """Print a compact audit of required source metadata fields."""
+    required_document_fields = [
+        "client",
+        "filename",
+        "document_title",
+        "document_type",
+        "source",
+        "source_path",
+    ]
+    required_chunk_fields = required_document_fields + ["chunk_index", "chunk_id"]
+
+    print("\n--- Metadata Audit ---")
+
+    missing_document_fields = {
+        field: sum(1 for doc in documents if field not in doc.metadata)
+        for field in required_document_fields
+    }
+    missing_chunk_fields = {
+        field: sum(1 for chunk in chunks if field not in chunk.metadata)
+        for field in required_chunk_fields
+    }
+
+    print("Missing document fields:")
+    for field, count in missing_document_fields.items():
+        print(f"  - {field}: {count}")
+
+    print("\nMissing chunk fields:")
+    for field, count in missing_chunk_fields.items():
+        print(f"  - {field}: {count}")
+
+    print("\nDocument types:")
+    for document_type, count in sorted(
+        Counter(doc.metadata["document_type"] for doc in documents).items()
+    ):
+        print(f"  - {document_type}: {count}")
+
+    print("\nSample chunk metadata:")
+    sample_chunk = chunks[0]
+    for field in required_chunk_fields:
+        print(f"  - {field}: {sample_chunk.metadata[field]}")
 
 
 def get_embeddings() -> HuggingFaceEmbeddings:
@@ -191,6 +276,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Build the vector store without running the baseline test queries.",
     )
+    parser.add_argument(
+        "--metadata-audit",
+        action="store_true",
+        help="Print a compact audit of the normalized metadata fields.",
+    )
     return parser.parse_args()
 
 
@@ -208,6 +298,9 @@ if __name__ == "__main__":
 
     if args.summary:
         print_corpus_summary(documents, chunks)
+
+    if args.metadata_audit:
+        print_metadata_audit(documents, chunks)
 
     reset_vectorstore()
 
