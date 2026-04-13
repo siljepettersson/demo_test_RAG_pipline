@@ -1,0 +1,23 @@
+[project]
+name = "demo-test-rag-pipline"
+version = "0.1.0"
+description = "Demo RAG client knowledge base for a marketing agency use case."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "chromadb>=1.0.0",
+    "langchain>=0.3.0",
+    "langchain-chroma>=0.2.0",
+    "langchain-community>=0.3.0",
+    "langchain-huggingface>=0.1.0",
+    "langchain-text-splitters>=0.3.0",
+    "sentence-transformers>=3.0.0",
+    "streamlit>=1.44.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+package = false
