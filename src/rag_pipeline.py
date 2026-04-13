@@ -13,11 +13,14 @@ from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
+from dotenv import load_dotenv
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.document_loaders import DirectoryLoader, TextLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+
+load_dotenv()
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
