@@ -36,25 +36,7 @@ It includes:
 
 The retrieval system works without API keys. That was a deliberate choice so the core of the demo stays cheap, reproducible, and easy to explain.
 
-## 3. Why this use case fits a marketing agency
-
-This use case fits agency work particularly well because client knowledge is:
-
-- high-value
-- distributed across many documents
-- reused by many roles
-- easy to get wrong when people rely on memory
-
-Typical questions this system should help answer:
-
-- "Hva er Fjordmats tone of voice?"
-- "Hva var ROAS for Spareklars Google Ads i Q4 2024?"
-- "Hvilke influencere samarbeider Nordvik med?"
-- "Hva sier kundecaset om Skytjenester sine resultater hos LogistikkPartner?"
-
-This is a better first build than a generic chatbot because it stays narrow, grounded, and auditable.
-
-## 4. Architecture and technical choices
+## 3. Architecture and technical choices
 
 The project uses a simple stack chosen for explainability and speed:
 
@@ -67,9 +49,9 @@ The project uses a simple stack chosen for explainability and speed:
 | UI | Streamlit | Fastest path to a clean demo interface |
 | LLM layer | Optional | Retrieval remains useful even without external generation |
 
-## 5. How the pipeline works
+## 4. How the pipeline works
 
-The retrieval pipeline lives in [src/rag_pipeline.py](/home/silje/project/demo_test_RAG_pipline/src/rag_pipeline.py).
+The retrieval pipeline lives in [src/rag_pipeline.py]
 
 It works in five steps:
 
@@ -83,21 +65,7 @@ It works in five steps:
 
 This is intentionally simple. There is no heavy reranker, no complicated orchestration layer, and no hidden LLM dependency in the retrieval path.
 
-## 6. Source attribution and explainability
-
-One of the main priorities in this project was making retrieval explainable.
-
-Each retrieved chunk can be traced back to:
-
-- client
-- document title
-- document type
-- source file
-- chunk index / chunk ID
-
-That matters because this MVP is not trying to impress with broad chat behavior. It is trying to show trustworthy retrieval and grounded answers.
-
-## 7. Current MVP status
+## 5. Current MVP status
 
 What is working now:
 
@@ -117,28 +85,10 @@ Top-1 source matches: 4/4
 
 That evaluation covers one representative question per client and checks expected client, expected document type, and expected source file.
 
-## 8. How the retrieval quality was tested
 
-The project includes a lightweight built-in retrieval evaluation loop.
+## 6. Streamlit demo
 
-Run:
-
-```bash
-uv run python src/rag_pipeline.py --evaluate --skip-queries
-```
-
-This:
-
-- loads and chunks the corpus
-- rebuilds the vector store
-- runs fixed Norwegian evaluation questions
-- reports whether top-1 retrieval matches the expected source
-
-This is intentionally modest, but useful for an MVP. It makes retrieval changes easier to validate without adding much complexity.
-
-## 9. Streamlit demo
-
-The app lives in [app.py](/home/silje/project/demo_test_RAG_pipline/app.py).
+The app lives in [app.py]
 
 The UI is intentionally minimal:
 
@@ -151,7 +101,7 @@ The UI is intentionally minimal:
 
 This keeps the demo focused on grounded retrieval instead of trying to mimic a full chat product.
 
-## 10. Project structure
+## 7. Project structure
 
 ```text
 data/
@@ -168,7 +118,7 @@ pyproject.toml
 uv.lock
 ```
 
-## 11. How to run locally
+## 8. How to run locally
 
 Install dependencies:
 
@@ -194,7 +144,7 @@ Run the Streamlit app:
 uv run streamlit run app.py
 ```
 
-## 12. Environment variables
+## 9. Environment variables
 
 The retrieval pipeline itself does not require API keys.
 
@@ -208,7 +158,7 @@ MINIMAX_API_KEY=...
 
 If no LLM provider is configured, the app still works in retrieval-only mode and shows the top supporting source text.
 
-## 13. Limitations
+## 10. Limitations
 
 This is still an MVP, and the limits are important to state clearly:
 
@@ -218,34 +168,10 @@ This is still an MVP, and the limits are important to state clearly:
 - There is no authentication, permissions model, or production document sync.
 - The UI is intentionally minimal and not production-grade.
 - The LLM layer is thin and should not be used to hide weak retrieval.
+- There have also been structural changes in a separate GitHub repository (`RAG-knowledge-assistant`), so the overall architecture should be understood as still evolving.
 
-## 14. What I would improve with more time
 
-If I had more time, I would prioritize:
 
-- a broader retrieval test set with paraphrased and harder Norwegian questions
-- a small `pytest` suite for metadata, determinism, and retrieval expectations
-- more robust ranking for ambiguous questions that do not explicitly mention a client
-- clearer answer formatting in the UI, especially around uncertainty and source usage
-- import/sync flows for more realistic agency document formats
-- a simple per-client filter or permissions model closer to how agencies actually work
 
-## 15. Why this is a credible first AI build
 
-The strongest version of this project is not "look at this chatbot".
 
-It is:
-
-"Here is one AI capability a marketing agency can realistically prioritize first. It is useful across teams, explainable to stakeholders, grounded in source material, and practical to prototype quickly."
-
-That is the standard this MVP was designed around.
-
-## 16. Time spent
-
-To keep this write-up honest, I would fill in the final submitted time based on actual work log rather than guess here.
-
-Suggested line for submission:
-
-```text
-Approximate time spent: [replace with your real number] hours
-```
